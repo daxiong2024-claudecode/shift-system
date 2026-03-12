@@ -1,6 +1,21 @@
-from app import create_app
+import sys
+print("Step 1: starting wsgi.py", flush=True)
 
-app = create_app('development')
+from flask import Flask
+print("Step 2: flask imported", flush=True)
 
-if __name__ == '__main__':
-    app.run()
+app = Flask(__name__)
+print("Step 3: flask app created", flush=True)
+
+
+@app.route('/health')
+def health():
+    return 'OK', 200
+
+
+@app.route('/')
+def hello():
+    return 'Railway is working!', 200
+
+
+print("Step 4: wsgi.py ready", flush=True)
