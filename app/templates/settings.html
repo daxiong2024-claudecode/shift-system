@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}班次配置 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">班次配置</div>
+    <div class="page-subtitle">管理班次类型和外呼时段</div>
+  </div>
+  <button class="btn btn-primary" onclick="openShiftModal()">➕ 新建班次</button>
+</div>
+
+<!-- 合规提示 -->
+<div class="glass" style="padding:12px 16px;margin-bottom:20px;border-left:3px solid #E67E22;border-radius:var(--radius-sm)">
+  <span style="color:#E67E22;font-weight:600">⚠️ 合规提示：</span>
+  <span style="font-size:13px;color:var(--text-secondary)" id="complianceNote">根据法规，外呼时段不得早于 08:00 或晚于 21:00</span>
+</div>
+
+<!-- 班次列表 -->
+<div class="glass content-card">
+  <div class="card-title"><span class="icon">🕐</span>班次列表</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>班次名称</th><th>上班时间</th><th>下班时间</th><th>外呼时段</th><th>最低在岗</th><th>颜色</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="shiftBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 班次 Modal -->
+<div class="modal-overlay" id="shiftModal">
+  <div class="modal" style="min-width:480px">
+    <div class="modal-title" id="shiftModalTitle">新建班次</div>
+    <input type="hidden" id="shiftId">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="grid-column:1/-1">
+        <label class="form-label">班次名称 <span style="color:var(--accent-red)">*</span></label>
+        <input class="input" id="shiftName" type="text" placeholder="如：早班">
+      </div>
+      <div>
+        <label class="form-label">上班时间</label>
+        <input class="input" id="workStart" type="time">
+      </div>
+      <div>
+        <label class="form-label">下班时间</label>
+        <input class="input" id="workEnd" type="time">
+      </div>
+      <div>
+        <label class="form-label">外呼开始（合规：≥08:00）</label>
+        <input class="input" id="callStart" type="time">
+      </div>
+      <div>
+        <label class="form-label">外呼结束（合规：≤21:00）</label>
+        <input class="input" id="callEnd" type="time">
+      </div>
+      <div>
+        <label class="form-label">最低在岗人数</label>
+        <input class="input" id="minAgents" type="number" min="0" value="0">
+      </div>
+      <div>
+        <label class="form-label">日历颜色</label>
+        <input class="input" id="colorTag" type="color" value="#4A90E2" style="height:40px;padding:4px">
+      </div>
+      <div style="grid-column:1/-1;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="isRest" style="width:16px;height:16px">
+        <label for="isRest" style="font-size:13px;cursor:pointer">休息班次（不外呼，不计入在岗人数）</label>
+      </div>
+    </div>
+    <div id="shiftError" style="color:var(--accent-red);font-size:12px;margin-top:8px;display:none"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeShiftModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveShift()">保存</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function init() {
+  await loadCurrentUser();
+  const data = await API.get('/api/shifts');
+  if (data.compliance) {
+    document.getElementById('complianceNote').textContent =
+      `${data.compliance.note}（合规时段：${data.compliance.call_compliance_start} - ${data.compliance.call_compliance_end}）`;
+  }
+  renderShifts(data.shifts);
+}
+
+function renderShifts(shifts) {
+  const tbody = document.getElementById('shiftBody');
+  if (shifts.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无班次，请新建</td></tr>'; return; }
+  tbody.innerHTML = shifts.map(s => `
+    <tr>
+      <td><span style="font-weight:600;color:${s.color_tag}">${s.shift_name}</span></td>
+      <td>${s.is_rest ? '--' : s.work_start}</td>
+      <td>${s.is_rest ? '--' : s.work_end}</td>
+      <td>${s.is_rest ? '<span style="color:var(--text-muted)">不外呼</span>' : (s.call_start ? `${s.call_start} - ${s.call_end}` : '--')}</td>
+      <td>${s.min_agents || 0} 人</td>
+      <td><span style="display:inline-block;width:24px;height:24px;border-radius:4px;background:${s.color_tag}"></span></td>
+      <td><span class="badge ${s.is_active?'badge-approved':'badge-rejected'}">${s.is_active?'启用':'已停用'}</span></td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="editShift(${JSON.stringify(s).replace(/"/g,'&quot;')})">编辑</button>
+        ${s.is_active?`<button class="btn btn-danger btn-sm" onclick="disableShift(${s.id})">停用</button>`:''}
+      </td>
+    </tr>`).join('');
+}
+
+function openShiftModal(edit=null) {
+  document.getElementById('shiftId').value = edit ? edit.id : '';
+  document.getElementById('shiftModalTitle').textContent = edit ? '编辑班次' : '新建班次';
+  document.getElementById('shiftName').value = edit ? edit.shift_name : '';
+  document.getElementById('workStart').value = edit ? edit.work_start : '09:00';
+  document.getElementById('workEnd').value = edit ? edit.work_end : '18:00';
+  document.getElementById('callStart').value = edit ? (edit.call_start||'') : '09:00';
+  document.getElementById('callEnd').value = edit ? (edit.call_end||'') : '18:00';
+  document.getElementById('minAgents').value = edit ? edit.min_agents : 0;
+  document.getElementById('colorTag').value = edit ? edit.color_tag : '#4A90E2';
+  document.getElementById('isRest').checked = edit ? edit.is_rest : false;
+  document.getElementById('shiftError').style.display = 'none';
+  document.getElementById('shiftModal').classList.add('active');
+}
+function editShift(s) { openShiftModal(s); }
+function closeShiftModal() { document.getElementById('shiftModal').classList.remove('active'); }
+
+async function saveShift() {
+  const id = document.getElementById('shiftId').value;
+  const errEl = document.getElementById('shiftError');
+  const body = {
+    shift_name: document.getElementById('shiftName').value.trim(),
+    work_start: document.getElementById('workStart').value,
+    work_end: document.getElementById('workEnd').value,
+    call_start: document.getElementById('callStart').value || null,
+    call_end: document.getElementById('callEnd').value || null,
+    min_agents: parseInt(document.getElementById('minAgents').value) || 0,
+    color_tag: document.getElementById('colorTag').value,
+    is_rest: document.getElementById('isRest').checked,
+  };
+  if (!body.shift_name) { errEl.textContent = '请输入班次名称'; errEl.style.display = 'block'; return; }
+  try {
+    if (id) await API.put(`/api/shifts/${id}`, body);
+    else await API.post('/api/shifts', body);
+    Toast.success('保存成功');
+    closeShiftModal();
+    init();
+  } catch(e) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+}
+
+async function disableShift(id) {
+  if (!confirm('确认停用此班次？已排班不受影响。')) return;
+  try {
+    await API.delete(`/api/shifts/${id}`);
+    Toast.success('已停用');
+    init();
+  } catch(e) { Toast.error(e.message); }
+}
+
+init();
+</script>
+{% endblock %}

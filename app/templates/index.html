@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}首页 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">工作台</div>
+    <div class="page-subtitle" id="todayDate">今日 --</div>
+  </div>
+</div>
+
+<!-- 今日班次卡片 -->
+<div class="stats-grid" id="statsGrid">
+  <div class="glass stat-card" id="shiftCard">
+    <div class="stat-label">今日班次</div>
+    <div class="stat-value" id="shiftName" style="font-size:20px">--</div>
+    <div class="stat-sub" id="shiftTime"></div>
+  </div>
+  <div class="glass stat-card" id="callCard">
+    <div class="stat-label">外呼时段</div>
+    <div class="stat-value" id="callTime" style="font-size:18px; color:#27AE60">--</div>
+    <div class="stat-sub" id="callStatus"></div>
+  </div>
+  <div class="glass stat-card">
+    <div class="stat-label">本月出勤</div>
+    <div class="stat-value" id="attendanceDays">--</div>
+    <div class="stat-sub">天</div>
+  </div>
+  <div class="glass stat-card">
+    <div class="stat-label">待审批申请</div>
+    <div class="stat-value" id="pendingCount" style="color:#E67E22">--</div>
+    <div class="stat-sub">条</div>
+  </div>
+</div>
+
+<!-- 本周排班预览 -->
+<div class="glass content-card">
+  <div class="card-title"><span class="icon">📅</span>本周排班</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr id="weekHeader"></tr>
+      </thead>
+      <tbody>
+        <tr id="weekRow"></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 最近考勤 -->
+<div class="glass content-card">
+  <div class="card-title"><span class="icon">✅</span>最近考勤记录</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>日期</th><th>上班打卡</th><th>下班打卡</th><th>状态</th></tr></thead>
+      <tbody id="attBody"><tr><td colspan="4" class="empty-state">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function loadIndex() {
+  const today = new Date();
+  document.getElementById('todayDate').textContent = `今日 ${today.getMonth()+1}月${today.getDate()}日 ${['周日','周一','周二','周三','周四','周五','周六'][today.getDay()]}`;
+
+  await loadCurrentUser();
+
+  // 本周排班
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (today.getDay() || 7) + 1);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  const fmt = d => d.toISOString().slice(0,10);
+
+  try {
+    const data = await API.get('/api/schedules', { start_date: fmt(monday), end_date: fmt(sunday) });
+    const schedMap = {};
+    data.schedules.forEach(s => { schedMap[s.work_date] = s; });
+
+    const header = document.getElementById('weekHeader');
+    const row = document.getElementById('weekRow');
+    const days = ['周一','周二','周三','周四','周五','周六','周日'];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      const ds = fmt(d);
+      const isToday = ds === fmt(today);
+      header.innerHTML += `<th style="${isToday?'color:#aab4ff':''}">${days[i]}<br><span style="font-size:11px;font-weight:400">${d.getMonth()+1}/${d.getDate()}</span></th>`;
+      const s = schedMap[ds];
+      const color = s ? s.color_tag : 'var(--shift-rest)';
+      const name = s ? s.shift_name : '未排班';
+      row.innerHTML += `<td><span style="display:inline-block;padding:4px 10px;border-radius:20px;background:${color}22;color:${color};font-size:12px;font-weight:600">${name}</span></td>`;
+
+      // 今日班次
+      if (isToday && s) {
+        document.getElementById('shiftName').textContent = s.shift_name;
+        document.getElementById('shiftName').style.color = s.color_tag;
+        document.getElementById('shiftTime').textContent = s.is_rest ? '休息日' : `上班时段（见排班详情）`;
+        document.getElementById('callTime').textContent = s.call_start ? `${s.call_start} - ${s.call_end}` : '不外呼';
+        const now = new Date();
+        const nowStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        const inWindow = s.call_start && nowStr >= s.call_start && nowStr <= s.call_end;
+        document.getElementById('callStatus').textContent = inWindow ? '✅ 当前在外呼时段内' : '⏸ 当前不在外呼时段';
+        document.getElementById('callStatus').style.color = inWindow ? '#27AE60' : 'var(--text-muted)';
+      }
+    }
+  } catch(e) {
+    console.error(e);
+  }
+
+  // 考勤记录
+  try {
+    const start = new Date(today); start.setDate(1);
+    const att = await API.get('/api/attendance', { start_date: fmt(start), end_date: fmt(today) });
+    const tbody = document.getElementById('attBody');
+    const statusMap = { normal:'正常', late:'迟到', early_leave:'早退', absent:'旷工', leave:'请假', clock_miss:'漏打卡', adjusted:'已修正' };
+    const badgeMap = { normal:'badge-normal', late:'badge-late', absent:'badge-absent', leave:'badge-leave', clock_miss:'badge-pending', adjusted:'badge-approved' };
+    if (att.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">暂无考勤记录</td></tr>';
+    } else {
+      tbody.innerHTML = att.records.slice(0,7).map(r =>
+        `<tr><td>${r.work_date}</td><td>${r.clock_in||'--'}</td><td>${r.clock_out||'--'}</td>
+         <td><span class="badge ${badgeMap[r.status]||'badge-pending'}">${statusMap[r.status]||r.status}</span></td></tr>`
+      ).join('');
+    }
+    document.getElementById('attendanceDays').textContent = att.records.filter(r=>r.status==='normal').length;
+  } catch(e) {}
+
+  // 待审批
+  try {
+    const apps = await API.get('/api/applications');
+    document.getElementById('pendingCount').textContent = apps.applications.filter(a=>a.status==='pending').length;
+  } catch(e) {}
+}
+
+loadIndex();
+</script>
+{% endblock %}

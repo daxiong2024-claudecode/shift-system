@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}审批工作台 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">审批工作台</div>
+    <div class="page-subtitle">处理下属的请假/调班申请</div>
+  </div>
+</div>
+
+<div class="glass content-card">
+  <div class="card-title"><span class="icon">🔔</span>待我审批</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>申请人</th><th>类型</th><th>日期</th><th>天数</th><th>原因</th><th>提交时间</th><th>操作</th></tr></thead>
+      <tbody id="pendingBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 审批 Modal -->
+<div class="modal-overlay" id="reviewModal">
+  <div class="modal">
+    <div class="modal-title" id="reviewTitle">审批申请</div>
+    <input type="hidden" id="reviewAppId">
+    <input type="hidden" id="reviewAction">
+    <div id="reviewInfo" style="background:rgba(255,255,255,0.04);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px"></div>
+    <div>
+      <label class="form-label">审批意见（可选）</label>
+      <textarea class="input" id="reviewComment" rows="3" placeholder="请输入审批意见..."></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeReview()">取消</button>
+      <button class="btn btn-primary" id="reviewConfirmBtn" onclick="submitReview()">确认</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const typeLabel = { sick:'病假', personal:'事假', annual:'年假', adjust:'调班', rest:'补休' };
+
+async function init() {
+  await loadCurrentUser();
+  loadPending();
+}
+
+async function loadPending() {
+  const data = await API.get('/api/applications', { mode: 'pending_review' });
+  const tbody = document.getElementById('pendingBody');
+  if (data.applications.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state" style="padding:40px">暂无待审批申请 ✅</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.applications.map(a => `
+    <tr>
+      <td style="font-weight:500">${a.applicant_name}</td>
+      <td><span class="badge badge-pending">${typeLabel[a.apply_type]||a.apply_type}</span></td>
+      <td style="font-size:12px">${a.start_date}${a.start_date!==a.end_date?` ~ ${a.end_date}`:''}</td>
+      <td>${a.days}天</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${a.reason||'--'}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${a.created_at}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn btn-success btn-sm" onclick="openReview(${a.id},'approve',${JSON.stringify(a).replace(/'/g,'').replace(/"/g,'&quot;')})">通过</button>
+        <button class="btn btn-danger btn-sm" onclick="openReview(${a.id},'reject',${JSON.stringify(a).replace(/'/g,'').replace(/"/g,'&quot;')})">拒绝</button>
+      </td>
+    </tr>`).join('');
+}
+
+function openReview(id, action, app) {
+  document.getElementById('reviewAppId').value = id;
+  document.getElementById('reviewAction').value = action;
+  document.getElementById('reviewComment').value = '';
+  document.getElementById('reviewTitle').textContent = action === 'approve' ? '✅ 审批通过' : '❌ 审批拒绝';
+  document.getElementById('reviewConfirmBtn').className = `btn ${action==='approve'?'btn-success':'btn-danger'}`;
+  document.getElementById('reviewConfirmBtn').textContent = action === 'approve' ? '确认通过' : '确认拒绝';
+  document.getElementById('reviewModal').classList.add('active');
+}
+function closeReview() { document.getElementById('reviewModal').classList.remove('active'); }
+
+async function submitReview() {
+  const id = document.getElementById('reviewAppId').value;
+  const action = document.getElementById('reviewAction').value;
+  const comment = document.getElementById('reviewComment').value;
+  try {
+    await API.put(`/api/applications/${id}/${action}`, { comment });
+    Toast.success(action === 'approve' ? '已批准' : '已拒绝');
+    closeReview();
+    loadPending();
+  } catch(e) { Toast.error(e.message); }
+}
+
+init();
+</script>
+{% endblock %}

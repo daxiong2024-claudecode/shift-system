@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}请假申请 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">请假 / 调班申请</div>
+    <div class="page-subtitle">提交申请，等待审批</div>
+  </div>
+  <button class="btn btn-primary" onclick="openApplyModal()">➕ 新建申请</button>
+</div>
+
+<!-- 我的申请列表 -->
+<div class="glass content-card">
+  <div class="card-title"><span class="icon">📝</span>我的申请记录</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>申请类型</th><th>日期</th><th>天数</th><th>原因</th><th>状态</th><th>审批意见</th><th>操作</th></tr></thead>
+      <tbody id="appBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 新建申请 Modal -->
+<div class="modal-overlay" id="applyModal">
+  <div class="modal">
+    <div class="modal-title">📝 新建申请</div>
+    <div style="margin-bottom:12px">
+      <label class="form-label">申请类型</label>
+      <select class="select" id="applyType" onchange="onTypeChange()">
+        <option value="personal">事假</option>
+        <option value="sick">病假</option>
+        <option value="annual">年假</option>
+        <option value="adjust">调班</option>
+        <option value="rest">补休</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="form-label">开始日期</label>
+        <input class="input" id="applyStart" type="date">
+      </div>
+      <div>
+        <label class="form-label">结束日期</label>
+        <input class="input" id="applyEnd" type="date">
+      </div>
+    </div>
+    <div style="margin-bottom:12px" id="daysRow">
+      <label class="form-label">天数</label>
+      <input class="input" id="applyDays" type="number" min="0.5" step="0.5" placeholder="如：1 或 0.5">
+    </div>
+    <div id="swapRow" style="display:none;margin-bottom:12px">
+      <label class="form-label">调班对象（工号）</label>
+      <input class="input" id="swapWith" type="text" placeholder="请输入对方工号">
+    </div>
+    <div style="margin-bottom:4px">
+      <label class="form-label">申请原因</label>
+      <textarea class="input" id="applyReason" rows="3" placeholder="简要说明原因..." style="resize:vertical"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeApplyModal()">取消</button>
+      <button class="btn btn-primary" onclick="submitApply()">提交申请</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const typeLabel = { sick:'病假', personal:'事假', annual:'年假', adjust:'调班', rest:'补休' };
+const statusMap = { pending:'待审批', approved:'已批准', rejected:'已拒绝', cancelled:'已撤回' };
+const badgeMap = { pending:'badge-pending', approved:'badge-approved', rejected:'badge-rejected', cancelled:'' };
+
+async function init() {
+  await loadCurrentUser();
+  const today = DateUtil.today();
+  document.getElementById('applyStart').value = today;
+  document.getElementById('applyEnd').value = today;
+  loadApps();
+}
+
+async function loadApps() {
+  const data = await API.get('/api/applications');
+  const tbody = document.getElementById('appBody');
+  if (data.applications.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无申请记录</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.applications.map(a => `
+    <tr>
+      <td>${typeLabel[a.apply_type]||a.apply_type}</td>
+      <td style="font-size:12px">${a.start_date}${a.start_date!==a.end_date?` ~ ${a.end_date}`:''}</td>
+      <td>${a.days}天</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${a.reason||'--'}</td>
+      <td><span class="badge ${badgeMap[a.status]||''}">${statusMap[a.status]||a.status}</span></td>
+      <td style="font-size:12px;color:var(--text-muted)">${a.level1_comment||a.level2_comment||'--'}</td>
+      <td>${a.status==='pending'?`<button class="btn btn-ghost btn-sm" onclick="cancelApp(${a.id})">撤回</button>`:'--'}</td>
+    </tr>`).join('');
+}
+
+function openApplyModal() { document.getElementById('applyModal').classList.add('active'); }
+function closeApplyModal() { document.getElementById('applyModal').classList.remove('active'); }
+
+function onTypeChange() {
+  const type = document.getElementById('applyType').value;
+  document.getElementById('swapRow').style.display = type === 'adjust' ? '' : 'none';
+}
+
+async function submitApply() {
+  const type = document.getElementById('applyType').value;
+  const start = document.getElementById('applyStart').value;
+  const end = document.getElementById('applyEnd').value;
+  const days = parseFloat(document.getElementById('applyDays').value);
+  const reason = document.getElementById('applyReason').value;
+  if (!start || !end || !days) { Toast.error('请填写完整信息'); return; }
+  const body = { apply_type: type, start_date: start, end_date: end, days, reason };
+  if (type === 'adjust') body.swap_with = document.getElementById('swapWith').value || null;
+  try {
+    await API.post('/api/applications', body);
+    Toast.success('申请已提交，等待审批');
+    closeApplyModal();
+    loadApps();
+  } catch(e) { Toast.error(e.message); }
+}
+
+async function cancelApp(id) {
+  if (!confirm('确认撤回此申请？')) return;
+  try {
+    await API.put(`/api/applications/${id}/cancel`);
+    Toast.success('申请已撤回');
+    loadApps();
+  } catch(e) { Toast.error(e.message); }
+}
+
+init();
+</script>
+{% endblock %}

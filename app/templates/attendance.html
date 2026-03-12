@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}考勤打卡 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">考勤管理</div>
+    <div class="page-subtitle">上下班打卡 & 考勤记录</div>
+  </div>
+</div>
+
+<!-- 今日打卡卡片 -->
+<div class="glass content-card" id="clockCard" style="max-width:500px">
+  <div class="card-title"><span class="icon">⏰</span>今日打卡</div>
+  <div id="todayShiftInfo" style="margin-bottom:20px;padding:12px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:13px">
+    <span style="color:var(--text-muted)">加载中...</span>
+  </div>
+  <div style="display:flex;gap:12px">
+    <button class="btn btn-success" id="btnClockIn" onclick="doClock('in')" style="flex:1;justify-content:center;padding:14px">
+      ✅ 上班打卡
+    </button>
+    <button class="btn btn-danger" id="btnClockOut" onclick="doClock('out')" style="flex:1;justify-content:center;padding:14px">
+      🔚 下班打卡
+    </button>
+  </div>
+  <div id="clockResult" style="margin-top:12px;font-size:13px;text-align:center;color:var(--text-muted)"></div>
+</div>
+
+<!-- 考勤记录 -->
+<div class="glass content-card" style="margin-top:20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div class="card-title" style="margin:0"><span class="icon">📋</span>考勤记录</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input class="input" id="attStart" type="date" style="width:130px">
+      <span style="color:var(--text-muted);font-size:12px">至</span>
+      <input class="input" id="attEnd" type="date" style="width:130px">
+      <button class="btn btn-ghost btn-sm" onclick="loadAtt()">查询</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>日期</th><th>班次</th><th>上班打卡</th><th>下班打卡</th><th>状态</th><th>迟到/早退</th><th id="thOp" style="display:none">操作</th></tr></thead>
+      <tbody id="attBody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const statusMap = { normal:'正常', late:'迟到', early_leave:'早退', absent:'旷工', leave:'请假', clock_miss:'漏打卡', adjusted:'已修正' };
+const badgeMap = { normal:'badge-normal', late:'badge-late', early_leave:'badge-late', absent:'badge-absent', leave:'badge-leave', clock_miss:'badge-pending', adjusted:'badge-approved' };
+
+async function init() {
+  await loadCurrentUser();
+  const today = DateUtil.today();
+  const start = new Date(today); start.setDate(1);
+  document.getElementById('attStart').value = start.toISOString().slice(0,10);
+  document.getElementById('attEnd').value = today;
+
+  // 今日班次信息
+  try {
+    const data = await API.get('/api/schedules', { start_date: today, end_date: today, employee_id: currentUser.id });
+    const s = data.schedules[0];
+    if (s) {
+      document.getElementById('todayShiftInfo').innerHTML =
+        `<span style="color:${s.color_tag};font-weight:600">${s.shift_name}</span>
+         ${s.call_start ? `&nbsp;|&nbsp; 外呼时段：<strong>${s.call_start} - ${s.call_end}</strong>` : ''}`;
+    } else {
+      document.getElementById('todayShiftInfo').innerHTML = '<span style="color:var(--text-muted)">今日暂无排班</span>';
+    }
+  } catch(e) {}
+
+  if (currentUser && currentUser.role_level >= 2) {
+    document.getElementById('thOp').style.display = '';
+  }
+
+  loadAtt();
+}
+
+async function doClock(type) {
+  try {
+    const url = type === 'in' ? '/api/attendance/clock-in' : '/api/attendance/clock-out';
+    const res = await API.post(url);
+    const att = res.attendance;
+    const timeStr = type === 'in' ? att.clock_in : att.clock_out;
+    Toast.success(`${type === 'in' ? '上班' : '下班'}打卡成功：${timeStr}`);
+    document.getElementById('clockResult').textContent = `打卡时间：${timeStr}`;
+    loadAtt();
+  } catch(e) { Toast.error(e.message); }
+}
+
+async function loadAtt() {
+  const start = document.getElementById('attStart').value;
+  const end = document.getElementById('attEnd').value;
+  try {
+    const data = await API.get('/api/attendance', { start_date: start, end_date: end });
+    const tbody = document.getElementById('attBody');
+    const isManager = currentUser && currentUser.role_level >= 2;
+
+    if (data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无考勤记录</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.records.map(r => `
+      <tr>
+        <td>${r.work_date}</td>
+        <td>--</td>
+        <td>${r.clock_in || '<span style="color:var(--text-muted)">未打卡</span>'}</td>
+        <td>${r.clock_out || '<span style="color:var(--text-muted)">未打卡</span>'}</td>
+        <td><span class="badge ${badgeMap[r.status]||'badge-pending'}">${statusMap[r.status]||r.status}</span></td>
+        <td style="font-size:12px;color:var(--text-muted)">
+          ${r.late_minutes > 0 ? `迟到${r.late_minutes}分` : ''}
+          ${r.early_minutes > 0 ? `早退${r.early_minutes}分` : ''}
+          ${!r.late_minutes && !r.early_minutes ? '--' : ''}
+        </td>
+        <td ${isManager ? '' : 'style="display:none"'}>
+          ${r.status === 'clock_miss' && isManager
+            ? `<button class="btn btn-ghost btn-sm" onclick="openAdjust(${r.id})">修正</button>`
+            : '--'}
+        </td>
+      </tr>`).join('');
+  } catch(e) { Toast.error(e.message); }
+}
+
+async function openAdjust(attId) {
+  const reason = prompt('请输入修正原因（如：设备故障、系统漏打卡等）：');
+  if (!reason) return;
+  try {
+    await API.put(`/api/attendance/${attId}/adjust`, { reason });
+    Toast.success('考勤已修正');
+    loadAtt();
+  } catch(e) { Toast.error(e.message); }
+}
+
+init();
+</script>
+{% endblock %}

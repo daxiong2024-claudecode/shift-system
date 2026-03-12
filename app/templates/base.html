@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}电销班表系统{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}">
+{% block extra_css %}{% endblock %}
+</head>
+<body>
+<div class="app-layout">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <h2>📋 电销班表</h2>
+      <p>信贷业务管理系统</p>
+    </div>
+
+    <nav class="nav-section">
+      <div class="nav-label">工作台</div>
+      <a class="nav-item" href="/" data-path="/">
+        <span class="nav-icon">🏠</span><span>首页</span>
+      </a>
+      <a class="nav-item" href="/schedule" data-path="/schedule">
+        <span class="nav-icon">📅</span><span>排班管理</span>
+      </a>
+      <a class="nav-item" href="/attendance" data-path="/attendance">
+        <span class="nav-icon">✅</span><span>考勤打卡</span>
+      </a>
+      <a class="nav-item" href="/apply" data-path="/apply">
+        <span class="nav-icon">📝</span><span>请假申请</span>
+      </a>
+    </nav>
+
+    <nav class="nav-section" id="managerNav" style="display:none">
+      <div class="nav-label">管理</div>
+      <a class="nav-item" href="/approval" data-path="/approval">
+        <span class="nav-icon">🔔</span><span>审批工作台</span>
+      </a>
+      <a class="nav-item" href="/report" data-path="/report">
+        <span class="nav-icon">📊</span><span>统计报表</span>
+      </a>
+    </nav>
+
+    <nav class="nav-section" id="adminNav" style="display:none">
+      <div class="nav-label">系统配置</div>
+      <a class="nav-item" href="/settings" data-path="/settings">
+        <span class="nav-icon">⚙️</span><span>班次配置</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar" id="userAvatar">?</div>
+        <div>
+          <div class="user-name" id="userName">加载中...</div>
+          <div class="user-role" id="userRole"></div>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm btn-logout" onclick="doLogout()">退出登录</button>
+    </div>
+  </aside>
+
+  <!-- 主内容 -->
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script src="{{ url_for('static', filename='js/api.js') }}"></script>
+<script>
+(async () => {
+  const user = await loadCurrentUser();
+  if (user) {
+    renderUserInfo(user);
+    if (user.role_level >= 2) document.getElementById('managerNav').style.display = '';
+    if (user.role_level >= 3) document.getElementById('adminNav').style.display = '';
+  }
+  highlightNav();
+})();
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

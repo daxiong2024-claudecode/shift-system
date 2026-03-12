@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}统计报表 - 电销班表{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">统计报表</div>
+    <div class="page-subtitle">出勤率 & 班次分布 & 外呼覆盖</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input class="input" id="rptStart" type="date" style="width:140px">
+    <span style="color:var(--text-muted);font-size:12px">至</span>
+    <input class="input" id="rptEnd" type="date" style="width:140px">
+    <button class="btn btn-primary btn-sm" onclick="loadReports()">查询</button>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+  <!-- 出勤率表格 -->
+  <div class="glass content-card">
+    <div class="card-title"><span class="icon">✅</span>出勤率统计</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>姓名</th><th>出勤天</th><th>迟到</th><th>早退</th><th>旷工</th><th>出勤率</th></tr></thead>
+        <tbody id="attStatsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 班次分布 -->
+  <div class="glass content-card">
+    <div class="card-title"><span class="icon">📊</span>班次使用分布</div>
+    <canvas id="shiftChart" height="200"></canvas>
+    <div id="shiftLegend" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px"></div>
+  </div>
+</div>
+
+<!-- 外呼时段覆盖热力图 -->
+<div class="glass content-card" style="margin-top:20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div class="card-title" style="margin:0"><span class="icon">📡</span>外呼时段人力覆盖（今日）</div>
+    <input class="input" id="coverageDate" type="date" style="width:140px" onchange="loadCoverage()">
+  </div>
+  <canvas id="coverageChart" height="100"></canvas>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function init() {
+  await loadCurrentUser();
+  const today = DateUtil.today();
+  const start = new Date(today); start.setDate(1);
+  document.getElementById('rptStart').value = start.toISOString().slice(0,10);
+  document.getElementById('rptEnd').value = today;
+  document.getElementById('coverageDate').value = today;
+  loadReports();
+  loadCoverage();
+}
+
+async function loadReports() {
+  const start = document.getElementById('rptStart').value;
+  const end = document.getElementById('rptEnd').value;
+  try {
+    const [attData, shiftData] = await Promise.all([
+      API.get('/api/report/attendance', { start_date: start, end_date: end }),
+      API.get('/api/report/shift-distribution', { start_date: start, end_date: end }),
+    ]);
+    renderAttStats(attData.stats);
+    renderShiftChart(shiftData.shift_total);
+  } catch(e) { Toast.error(e.message); }
+}
+
+function renderAttStats(stats) {
+  const tbody = document.getElementById('attStatsBody');
+  if (stats.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无数据</td></tr>'; return; }
+  tbody.innerHTML = stats.map(s => {
+    const rateColor = s.attendance_rate >= 95 ? '#27AE60' : s.attendance_rate >= 80 ? '#E67E22' : '#E74C3C';
+    return `<tr>
+      <td style="font-weight:500">${s.employee_name}</td>
+      <td>${s.normal}</td>
+      <td style="color:${s.late>0?'#E74C3C':'inherit'}">${s.late}</td>
+      <td style="color:${s.early_leave>0?'#E67E22':'inherit'}">${s.early_leave}</td>
+      <td style="color:${s.absent>0?'#E74C3C':'inherit'}">${s.absent}</td>
+      <td><strong style="color:${rateColor}">${s.attendance_rate}%</strong></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderShiftChart(shiftTotal) {
+  const canvas = document.getElementById('shiftChart');
+  const ctx = canvas.getContext('2d');
+  const entries = Object.entries(shiftTotal).sort((a,b) => b[1]-a[1]);
+  if (entries.length === 0) return;
+
+  const w = canvas.offsetWidth || 400;
+  canvas.width = w; canvas.height = 200;
+  ctx.clearRect(0, 0, w, 200);
+
+  const maxVal = Math.max(...entries.map(e => e[1]));
+  const barW = Math.min(60, (w - 40) / entries.length - 12);
+  const colors = ['#4A90E2','#27AE60','#E67E22','#9B59B6','#E74C3C'];
+  const gap = (w - 40) / entries.length;
+
+  entries.forEach(([name, count], i) => {
+    const x = 20 + i * gap + gap / 2 - barW / 2;
+    const barH = ((count / maxVal) * 140);
+    const y = 155 - barH;
+    ctx.fillStyle = colors[i % colors.length] + '88';
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 4);
+    ctx.fill();
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.font = 'bold 13px Microsoft YaHei';
+    ctx.textAlign = 'center';
+    ctx.fillText(count, x + barW/2, y - 6);
+    ctx.fillStyle = '#9090b0';
+    ctx.font = '11px Microsoft YaHei';
+    ctx.fillText(name, x + barW/2, 175);
+  });
+
+  // 图例
+  document.getElementById('shiftLegend').innerHTML = entries.map(([name, count], i) =>
+    `<span style="display:flex;align-items:center;gap:4px;font-size:12px">
+       <span style="width:10px;height:10px;border-radius:2px;background:${colors[i%colors.length]};display:inline-block"></span>
+       ${name}: ${count}次
+     </span>`).join('');
+}
+
+async function loadCoverage() {
+  const d = document.getElementById('coverageDate').value;
+  try {
+    const data = await API.get('/api/report/call-coverage', { date: d });
+    renderCoverage(data.hourly);
+  } catch(e) {}
+}
+
+function renderCoverage(hourly) {
+  const canvas = document.getElementById('coverageChart');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.offsetWidth || 800;
+  canvas.width = w; canvas.height = 100;
+  ctx.clearRect(0, 0, w, 100);
+
+  const hours = Object.keys(hourly).sort((a,b) => a-b);
+  const vals = hours.map(h => hourly[h]);
+  const maxVal = Math.max(...vals, 1);
+  const barW = (w - 60) / hours.length - 4;
+
+  hours.forEach((h, i) => {
+    const count = vals[i];
+    const x = 40 + i * ((w - 60) / hours.length);
+    const barH = (count / maxVal) * 60;
+    const y = 70 - barH;
+    const intensity = count / maxVal;
+    const r = Math.round(74 + intensity * (231-74));
+    const g = Math.round(144 + intensity * (76-144));
+    const b = Math.round(226 + intensity * (60-226));
+    ctx.fillStyle = `rgba(${r},${g},${b},0.8)`;
+    ctx.beginPath();
+    ctx.roundRect(x, y, Math.max(barW, 2), barH, 3);
+    ctx.fill();
+    ctx.fillStyle = '#9090b0';
+    ctx.font = '10px Microsoft YaHei';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${h}时`, x + barW/2, 85);
+    if (count > 0) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px Microsoft YaHei';
+      ctx.fillText(count, x + barW/2, y - 3);
+    }
+  });
+}
+
+init();
+</script>
+{% endblock %}
