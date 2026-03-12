@@ -7,13 +7,23 @@ from .config import config
 db = SQLAlchemy()
 migrate = Migrate()
 login_manager = LoginManager()
-login_manager.login_view = 'auth.login'
+login_manager.login_view = 'views.login_page'
 login_manager.login_message = '请先登录'
 
 
 def create_app(config_name='default'):
+    import sys
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+
+    @app.before_request
+    def log_request():
+        from flask import request
+        print(f"REQUEST: {request.method} {request.path}", flush=True)
+
+    @app.route('/health')
+    def health():
+        return 'OK', 200
 
     db.init_app(app)
     migrate.init_app(app, db)

@@ -1,2 +1,4 @@
 [deploy]
 startCommand = "python init_db.py && gunicorn wsgi:app --bind 0.0.0.0:$PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
